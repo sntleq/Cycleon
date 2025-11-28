@@ -1,9 +1,4 @@
 <svg width="825" height="865" viewBox="0 0 825 865" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <style>
-        rect {
-            fill: oklch(0.623 0.214 259.815);
-        }
-    </style>
     <rect x="464.943" y="462.19" width="360" height="120"/>
     <rect x="464.857" y="401.854" width="360" height="120" transform="rotate(-60 464.857 401.854)"/>
     <rect x="412.782" y="492.423" width="360" height="120" transform="rotate(60 412.782 492.423)"/>

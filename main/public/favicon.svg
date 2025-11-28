@@ -1,7 +1,12 @@
 <svg width="825" height="865" viewBox="0 0 825 865" fill="none" xmlns="http://www.w3.org/2000/svg">
     <style>
         rect {
-            fill: oklch(0.623 0.214 259.815);
+            fill: black;
+        }
+        @media (prefers-color-scheme: dark) {
+            rect {
+                fill: white;
+            }
         }
     </style>
     <rect x="464.943" y="462.19" width="360" height="120"/>

@@ -15,9 +15,9 @@ export function AppContent({
     }
 
     return (
-        <div className="w-full h-full flex flex-1 flex-col bg-cool-gradient">
+        <div className="w-full h-full flex flex-1 flex-col bg-transparent">
             <main
-                className="mx-auto flex h-full w-full max-w-7xl flex-1 flex-col gap-4 rounded-xl"
+                className="mx-auto flex h-full w-full max-w-7xl flex-1 flex-col gap-4 rounded-xl bg-transparent"
                 {...props}
             >
                 {children}
