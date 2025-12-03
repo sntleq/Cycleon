@@ -13,7 +13,7 @@ return new class extends Migration
             $table->string('name');
             $table->string('type');
             $table->string('rarity');
-            $table->foreignId('game_id')->constrained()->onDelete('cascade');
+            $table->foreignId('game_id')->constrained('game')->onDelete('cascade');
             $table->boolean('is_obtainable')->default(true);
             $table->timestamps();
 
@@ -23,6 +23,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('items');
+        Schema::dropIfExists('item');
     }
 };

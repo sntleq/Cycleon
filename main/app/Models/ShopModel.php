@@ -11,6 +11,8 @@ class ShopModel extends Model
 {
     use HasFactory;
 
+    protected $table = 'shop';
+
     protected $fillable = [
         'name',
         'game_id',
@@ -19,24 +21,23 @@ class ShopModel extends Model
     /**
      * Get the game that owns the shop.
      */
-    public function game(): BelongsTo
+    public function game()
     {
-        return $this->belongsTo(GameModel::class);
+        return $this->belongsTo(GameModel::class, 'game_id');
     }
 
     /**
      * Get all snapshots for the shop.
      */
-    public function snapshot(): HasMany
+    public function itemSnapshots()
     {
-        return $this->hasMany(SnapshotModel::class);
+        return $this->hasMany(ItemSnapshotModel::class, 'shop_id');
     }
-
     /**
      * Get all items through snapshots.
      */
     public function item()
     {
-        return $this->hasManyThrough(ItemModel::class, SnapshotModel::class);
+        return $this->hasManyThrough(ItemModel::class, ItemSnapshotModel::class);
     }
 }

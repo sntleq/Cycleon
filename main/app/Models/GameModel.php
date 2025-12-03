@@ -10,6 +10,8 @@ class GameModel extends Model
 {
     use HasFactory;
 
+    protected $table = 'game';
+
     protected $fillable = [
         'name',
     ];

@@ -29,7 +29,7 @@ import {
 import { UserMenuContent } from '@/components/user-menu-content';
 import { useInitials } from '@/hooks/use-initials';
 import { cn } from '@/lib/utils';
-import { growAGarden, plantsVsBrainrots } from '@/routes';
+import { growAGarden } from '@/routes';
 import { type BreadcrumbItem, type NavItem, type SharedData } from '@/types';
 import { Link, usePage } from '@inertiajs/react';
 import { Bell, Menu } from 'lucide-react';
@@ -41,11 +41,6 @@ const mainNavItems: NavItem[] = [
         title: 'Grow a Garden',
         href: growAGarden(),
         icon: "/icons/grow-a-garden.webp",
-    },
-    {
-        title: 'Plants vs Brainrots',
-        href: plantsVsBrainrots(),
-        icon: "/icons/plants-vs-brainrots.webp",
     },
 ];
 

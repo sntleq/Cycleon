@@ -1,107 +1,148 @@
 <?php
-// app/Http/Controllers/EventsController.php
-namespace app\Http\Controllers;
+
+namespace App\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+use App\Models\GameModel;
+use App\Models\WeatherModel;
+use App\Models\WeatherSnapshotModel;
 
 class EventsController extends Controller
 {
+    private $gameId;
+
+    public function __construct()
+    {
+        $this->gameId = $this->getGameId();
+    }
+
+    private function getGameId()
+    {
+        $game = GameModel::firstOrCreate(
+            ['name' => 'Grow a Garden'],
+            ['name' => 'Grow a Garden']
+        );
+
+        return $game->id;
+    }
+
     public function proxy(string $game = 'grow-a-garden'): JsonResponse
     {
-        $apiUrls = [
-            'grow-a-garden' => 'https://alpha-v0-lama.3itx.tech/api/v1/weather',
-            'plants-vs-brainrots' => 'https://alpha-v0-lama.3itx.tech/api/v1/plantvsbrainrot/Events',
-        ];
+        if ($game === 'grow-a-garden') {
+            try {
+                Log::info('🌤️ Fetching weather data for GAG');
 
-        if (!isset($apiUrls[$game])) {
-            return response()->json([
-                'error' => 'Invalid game specified',
-                'available_games' => array_keys($apiUrls)
-            ], 400);
-        }
+                $context = stream_context_create([
+                    'ssl' => [
+                        'verify_peer' => false,
+                        'verify_peer_name' => false,
+                    ],
+                    'http' => [
+                        'timeout' => 10,
+                    ]
+                ]);
 
-        $url = $apiUrls[$game];
-        $apiKey = 'a8aa7169-6483-4862-88c7-7932893fee2d';
+                $response = file_get_contents('https://gagapi.onrender.com/weather', false, $context);
 
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL => $url,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HTTPHEADER => [
-                'x-api-key: ' . $apiKey,
-                'Accept: application/json',
-                'Cache-Control: no-cache, no-store',
-                'Pragma: no-cache'
-            ],
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => 0,
-            CURLOPT_TIMEOUT => 10,
-            CURLOPT_FRESH_CONNECT => true,
-        ]);
-
-        $response = curl_exec($ch);
-        $curlError = curl_error($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
-        if ($response && !$curlError) {
-            $data = json_decode($response, true);
-            if (json_last_error() === JSON_ERROR_NONE && $data) {
-                // Transform Grow-a-Garden data to consistent format
-                if ($game === 'grow-a-garden' && isset($data['weather'])) {
-                    $transformedData = [
-                        'events' => [],
-                        'lastSeenEvents' => $this->transformGrowAGardenEvents($data['weather']),
-                        'nextEvent' => null,
-                        'timestamp' => $data['timestamp'] ?? now()->toISOString(),
-                    ];
-                    return response()->json($transformedData);
+                if ($response === false) {
+                    throw new \Exception('Failed to fetch weather data');
                 }
 
-                return response()->json($data);
-            }
-        }
+                $weatherData = json_decode($response, true);
 
-        // Fallback
-        $context = stream_context_create([
-            'http' => [
-                'method' => 'GET',
-                'header' => implode("\r\n", [
+                if ($weatherData && isset($weatherData['type'])) {
+                    Log::info('✅ Weather data received', ['type' => $weatherData['type']]);
+
+                    // STORE WEATHER DATA
+                    $this->storeWeatherData($weatherData);
+
+                    $lastSeen = $weatherData['lastUpdated'] ?? 'now';
+                    $lastSeenTimestamp = is_numeric($lastSeen) ? $lastSeen : strtotime($lastSeen);
+
+                    return response()->json([
+                        'events' => [],
+                        'lastSeenEvents' => [[
+                            'Name' => $weatherData['type'],
+                            'DisplayName' => ucfirst($weatherData['type']),
+                            'Image' => 'https://cdn.3itx.tech/image/GrowAGarden/' . strtolower($weatherData['type']),
+                            'Description' => implode(', ', $weatherData['effects'] ?? ['No effects']),
+                            'LastSeen' => $lastSeenTimestamp,
+                            'start_timestamp_unix' => $lastSeenTimestamp,
+                            'end_timestamp_unix' => $lastSeenTimestamp + 3600,
+                            'active' => $weatherData['active'] ?? false,
+                            'duration' => 3600,
+                        ]],
+                        'nextEvent' => null,
+                        'timestamp' => now()->toISOString(),
+                    ]);
+                } else {
+                    Log::warning('⚠️ Invalid weather data format', ['data' => $weatherData]);
+                }
+            } catch (\Exception $e) {
+                Log::error('❌ Weather API failed: ' . $e->getMessage());
+
+                // Try to get last stored weather as fallback
+                try {
+                    $lastWeather = WeatherSnapshotModel::with('weather')
+                        ->whereHas('weather', function($q) {
+                            $q->where('game_id', $this->gameId);
+                        })
+                        ->latest()
+                        ->first();
+
+                    if ($lastWeather) {
+                        Log::info('🔄 Using cached weather data');
+                        return response()->json([
+                            'events' => [],
+                            'lastSeenEvents' => [[
+                                'Name' => $lastWeather->weather->name,
+                                'DisplayName' => ucfirst($lastWeather->weather->name),
+                                'Image' => 'https://cdn.3itx.tech/image/GrowAGarden/' . strtolower($lastWeather->weather->name),
+                                'Description' => 'Last known weather',
+                                'LastSeen' => $lastWeather->timestamp->timestamp,
+                                'start_timestamp_unix' => $lastWeather->timestamp->timestamp,
+                                'end_timestamp_unix' => $lastWeather->timestamp->timestamp + 3600,
+                                'active' => false,
+                                'duration' => 3600,
+                            ]],
+                            'nextEvent' => null,
+                            'timestamp' => now()->toISOString(),
+                        ]);
+                    }
+                } catch (\Exception $fallbackError) {
+                    Log::error('❌ Fallback also failed: ' . $fallbackError->getMessage());
+                }
+            }
+        } else if ($game === 'plants-vs-brainrots') {
+            $url = 'https://alpha-v0-lama.3itx.tech/api/v1/plantvsbrainrot/Events';
+            $apiKey = 'a8aa7169-6483-4862-88c7-7932893fee2d';
+
+            $ch = curl_init();
+            curl_setopt_array($ch, [
+                CURLOPT_URL => $url,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_HTTPHEADER => [
                     'x-api-key: ' . $apiKey,
                     'Accept: application/json',
-                    'Cache-Control: no-cache'
-                ]),
-                'timeout' => 10,
-                'ignore_errors' => true,
-            ],
-            'ssl' => [
-                'verify_peer' => false,
-                'verify_peer_name' => false,
-            ]
-        ]);
+                ],
+                CURLOPT_TIMEOUT => 10,
+                CURLOPT_SSL_VERIFYPEER => false,
+            ]);
 
-        $response = @file_get_contents($url, false, $context);
+            $response = curl_exec($ch);
+            curl_close($ch);
 
-        if ($response !== false) {
-            $data = json_decode($response, true);
-            if (json_last_error() === JSON_ERROR_NONE && $data) {
-                // Transform Grow-a-Garden data
-                if ($game === 'grow-a-garden' && isset($data['weather'])) {
-                    $transformedData = [
-                        'events' => [],
-                        'lastSeenEvents' => $this->transformGrowAGardenEvents($data['weather']),
-                        'nextEvent' => null,
-                        'timestamp' => $data['timestamp'] ?? now()->toISOString(),
-                    ];
-                    return response()->json($transformedData);
+            if ($response) {
+                $data = json_decode($response, true);
+                if ($data) {
+                    return response()->json($data);
                 }
-
-                return response()->json($data);
             }
         }
 
-        // Fallback empty data
+        // Default fallback response
         return response()->json([
             'events' => [],
             'lastSeenEvents' => [],
@@ -110,37 +151,36 @@ class EventsController extends Controller
         ]);
     }
 
-    private function transformGrowAGardenEvents(array $weatherEvents): array
+    private function storeWeatherData(array $weatherData)
     {
-        $transformed = [];
+        try {
+            DB::beginTransaction();
 
-        foreach ($weatherEvents as $event) {
-            $transformed[] = [
-                'Name' => $event['weather'] ?? 'Unknown',
-                'DisplayName' => $event['weather'] ?? 'Unknown',
-                'Image' => $event['image'] ?? '',
-                'Description' => $this->getGrowAGardenDescription($event['weather'] ?? ''),
-                'LastSeen' => $event['start_timestamp_unix'] ?? time(),
-                'start_timestamp_unix' => $event['start_timestamp_unix'] ?? time(),
-                'end_timestamp_unix' => $event['end_timestamp_unix'] ?? time() + 600,
-                'active' => $event['active'] ?? false,
-                'duration' => $event['duration'] ?? 600,
-            ];
+            // Get or create weather type
+            $weather = WeatherModel::firstOrCreate(
+                [
+                    'name' => $weatherData['type'],
+                    'game_id' => $this->gameId
+                ],
+                [
+                    'name' => $weatherData['type'],
+                    'game_id' => $this->gameId
+                ]
+            );
+
+            // Create snapshot
+            WeatherSnapshotModel::create([
+                'weather_id' => $weather->id,
+                'duration' => $weatherData['duration'] ?? 3600,
+                'timestamp' => now()
+            ]);
+
+            DB::commit();
+            Log::info("💾 Stored weather data", ['type' => $weatherData['type']]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error("❌ Failed to store weather data: " . $e->getMessage());
         }
-
-        return $transformed;
-    }
-
-    private function getGrowAGardenDescription(string $weather): string
-    {
-        $descriptions = [
-            'SummerHarvest' => 'Harvest season is here! Crops grow faster and yield more.',
-            'Rainy' => 'Rainy weather increases water retention in crops.',
-            'Sunny' => 'Bright sunny days boost photosynthesis.',
-            'Stormy' => 'Stormy weather can damage crops but provides extra water.',
-            'Windy' => 'Wind helps with pollination but can damage delicate plants.',
-        ];
-
-        return $descriptions[$weather] ?? 'A weather event affecting your garden.';
     }
 }

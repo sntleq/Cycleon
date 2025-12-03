@@ -11,7 +11,7 @@ return new class extends Migration
         Schema::create('shop', function (Blueprint $table) {
             $table->id();
             $table->string('name')->unique();
-            $table->foreignId('game_id')->constrained()->onDelete('cascade');
+            $table->foreignId('game_id')->constrained('game')->onDelete('cascade');
             $table->timestamps();
 
             $table->unique(['name', 'game_id']);
@@ -20,6 +20,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('shops');
+        Schema::dropIfExists('shop');
     }
 };
