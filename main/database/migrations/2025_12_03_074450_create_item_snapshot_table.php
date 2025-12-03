@@ -8,10 +8,10 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('snapshot', function (Blueprint $table) {
+        Schema::create('item_snapshot', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('item_id')->constrained()->onDelete('cascade');
-            $table->foreignId('shop_id')->constrained()->onDelete('cascade');
+            $table->foreignId('item_id')->constrained('item')->onDelete('cascade');
+            $table->foreignId('shop_id')->constrained('shop')->onDelete('cascade');
             $table->integer('quantity')->default(0);
             $table->timestamp('timestamp');
             $table->timestamps();
@@ -22,6 +22,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('snapshots');
+        Schema::dropIfExists('item_snapshot');
     }
 };

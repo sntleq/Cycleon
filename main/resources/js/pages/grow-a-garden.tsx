@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { H2 } from '@/components/h2';
 import { H3 } from '@/components/h3';
 import { H4 } from '@/components/h4';
@@ -9,7 +9,6 @@ import { type BreadcrumbItem } from '@/types';
 import { Head } from '@inertiajs/react';
 import StockCard from "@/components/stock-card";
 import WeatherCard from "@/components/weather-card";
-import { useRefreshCountdown } from "@/hooks/use-refresh-countdown";
 
 const breadcrumbs: BreadcrumbItem[] = [
     {
@@ -21,138 +20,556 @@ const breadcrumbs: BreadcrumbItem[] = [
 export interface StockItem {
     name: string;
     Stock: number;
-    Emoji?: string;
     image: string;
-    Tier?: string;
-    Set?: string;
 }
 
-interface WeatherEventItem {
-    Name: string;
-    DisplayName: string;
-    Image: string;
-    Description: string;
-    LastSeen: number;
-    start_timestamp_unix: number;
-    end_timestamp_unix: number;
-    active?: boolean;
-    duration?: number;
+interface WeatherData {
+    type: string;
+    active: boolean;
+    effects: string[];
+    lastUpdated: string;
+}
+
+interface CountdownInfo {
+    minutes: number;
+    seconds: number;
+    totalSeconds: number;
 }
 
 export default function GrowAGarden() {
-    const [stockData, setStockData] = useState<{
-        seed_stock: StockItem[];
-        gear_stock: StockItem[];
-        egg_stock: StockItem[];
-        cosmetic_stock: StockItem[];
-        Season_Stock: StockItem[];
-    } | null>(null);
+    const [seedStock, setSeedStock] = useState<StockItem[]>([]);
+    const [gearStock, setGearStock] = useState<StockItem[]>([]);
+    const [cosmeticStock, setCosmeticStock] = useState<StockItem[]>([]);
+    const [eventShopStock, setEventShopStock] = useState<StockItem[]>([]);
+    const [eggStock, setEggStock] = useState<StockItem[]>([]);
+    const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
+    const [lastUpdateTime, setLastUpdateTime] = useState<Date>(new Date());
+    const [isLoading, setIsLoading] = useState(true);
 
-    const [weatherEvents, setWeatherEvents] = useState<WeatherEventItem[]>([]);
-    const [loadingEvents, setLoadingEvents] = useState(true);
+    // For tracking which shops are currently fetching
+    const [fetchingShops, setFetchingShops] = useState<Set<string>>(new Set());
 
-    // Helper to calculate actual restock times
+    // Store countdown values
+    const [countdowns, setCountdowns] = useState<Record<string, CountdownInfo>>({
+        seed: { minutes: 5, seconds: 0, totalSeconds: 300 },
+        gear: { minutes: 5, seconds: 0, totalSeconds: 300 },
+        event: { minutes: 30, seconds: 0, totalSeconds: 1800 },
+        egg: { minutes: 30, seconds: 0, totalSeconds: 1800 },
+        cosmetic: { minutes: 240, seconds: 0, totalSeconds: 14400 }
+    });
+
+    // Refs for intervals and timeouts
+    const countdownIntervalsRef = useRef<Record<string, NodeJS.Timeout>>({});
+    const fetchTimeoutsRef = useRef<Record<string, NodeJS.Timeout>>({});
+    const hasFetchedOnRestockRef = useRef<Record<string, boolean>>({});
+
+    // Calculate restock times for display only
     const calculateRestockTimes = (intervalMinutes: number) => {
         const now = new Date();
         const intervalMs = intervalMinutes * 60 * 1000;
-
-        // Shops restock at specific intervals from midnight
         const midnight = new Date(now);
         midnight.setHours(0, 0, 0, 0);
-
         const timeSinceMidnight = now.getTime() - midnight.getTime();
         const intervalsSinceMidnight = Math.floor(timeSinceMidnight / intervalMs);
-
         const lastRestockTime = new Date(midnight.getTime() + (intervalsSinceMidnight * intervalMs));
         const nextRestockTime = new Date(lastRestockTime.getTime() + intervalMs);
 
-        const formatTime = (date: Date) => {
-            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        };
-
         return {
-            lastRestock: formatTime(lastRestockTime),
-            nextRestock: formatTime(nextRestockTime)
+            lastRestock: lastRestockTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            nextRestock: nextRestockTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         };
     };
 
-    // Calculate restock times
+    // Restock times for display
     const seedRestock = calculateRestockTimes(5);
     const gearRestock = calculateRestockTimes(5);
-    const eggRestock = calculateRestockTimes(30);
     const cosmeticRestock = calculateRestockTimes(240);
-    const seasonRestock = calculateRestockTimes(5);
+    const eventShopRestock = calculateRestockTimes(30);
+    const eggRestock = calculateRestockTimes(30);
 
-    // Daily Deals restock calculation
-    const getDailyDealsRestock = () => {
-        const now = new Date();
-        const nextRestock = new Date(now);
-        nextRestock.setHours(8, 0, 0, 0);
-
-        if (now.getHours() >= 8) {
-            nextRestock.setDate(nextRestock.getDate() + 1);
+    // Function to start countdown for a shop
+    const startShopCountdown = useCallback((shopKey: string, intervalMinutes: number) => {
+        // Clear existing interval if any
+        if (countdownIntervalsRef.current[shopKey]) {
+            clearInterval(countdownIntervalsRef.current[shopKey]);
         }
 
-        const lastRestock = new Date(nextRestock);
-        lastRestock.setDate(lastRestock.getDate() - 1);
+        // Calculate initial time until next restock
+        const now = new Date();
+        const intervalMs = intervalMinutes * 60 * 1000;
+        const midnight = new Date(now);
+        midnight.setHours(0, 0, 0, 0);
+        const timeSinceMidnight = now.getTime() - midnight.getTime();
+        const intervalsSinceMidnight = Math.floor(timeSinceMidnight / intervalMs);
+        const lastRestockTime = new Date(midnight.getTime() + (intervalsSinceMidnight * intervalMs));
+        const nextRestockTime = new Date(lastRestockTime.getTime() + intervalMs);
+        const msUntilRestock = nextRestockTime.getTime() - now.getTime();
 
-        const formatTime = (date: Date) => {
-            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        };
+        let totalSeconds = Math.floor(msUntilRestock / 1000);
+        if (totalSeconds < 0) totalSeconds = 0;
 
-        return {
-            lastRestock: formatTime(lastRestock),
-            nextRestock: formatTime(nextRestock)
-        };
+        const initialMinutes = Math.floor(totalSeconds / 60);
+        const initialSeconds = totalSeconds % 60;
+
+        // Set initial countdown
+        setCountdowns(prev => ({
+            ...prev,
+            [shopKey]: {
+                minutes: initialMinutes,
+                seconds: initialSeconds,
+                totalSeconds
+            }
+        }));
+
+        // Reset fetch flag
+        hasFetchedOnRestockRef.current[shopKey] = false;
+
+        // Start countdown interval
+        countdownIntervalsRef.current[shopKey] = setInterval(() => {
+            setCountdowns(prev => {
+                const current = prev[shopKey];
+                if (!current) return prev;
+
+                let newTotalSeconds = current.totalSeconds - 1;
+                if (newTotalSeconds < 0) newTotalSeconds = 0;
+
+                const newMinutes = Math.floor(newTotalSeconds / 60);
+                const newSeconds = newTotalSeconds % 60;
+
+                // Check if countdown reached 0 AND we haven't fetched yet
+                if (newTotalSeconds === 0 && !hasFetchedOnRestockRef.current[shopKey]) {
+                    hasFetchedOnRestockRef.current[shopKey] = true;
+
+                    // Trigger fetch for this shop
+                    setTimeout(() => {
+                        const shopConfig = {
+                            seed: { url: 'https://gagapi.onrender.com/seeds', setter: setSeedStock, name: 'Seed Shop' },
+                            gear: { url: 'https://gagapi.onrender.com/gear', setter: setGearStock, name: 'Gear Shop' },
+                            event: { url: 'https://gagapi.onrender.com/eventshop', setter: setEventShopStock, name: 'Event Shop' },
+                            egg: { url: 'https://gagapi.onrender.com/eggs', setter: setEggStock, name: 'Egg Shop' },
+                            cosmetic: { url: 'https://gagapi.onrender.com/cosmetics', setter: setCosmeticStock, name: 'Cosmetic Shop' }
+                        }[shopKey];
+
+                        if (shopConfig) {
+                            fetchShopData(shopConfig.url, shopConfig.setter, shopConfig.name, shopKey);
+                        }
+                    }, 100);
+                }
+
+                return {
+                    ...prev,
+                    [shopKey]: {
+                        minutes: newMinutes,
+                        seconds: newSeconds,
+                        totalSeconds: newTotalSeconds
+                    }
+                };
+            });
+        }, 1000);
+    }, []);
+
+    // Function to format countdown for display
+    const formatCountdown = (shopKey: string): string => {
+        const countdown = countdowns[shopKey];
+        if (!countdown) return "0:00";
+
+        // When countdown reaches 0, show "Restocking..." while fetching
+        if (countdown.totalSeconds === 0 && fetchingShops.has(shopKey)) {
+            return "Restocking...";
+        }
+
+        // When countdown reaches 0 and fetch is done, reset to full interval
+        if (countdown.totalSeconds === 0 && !fetchingShops.has(shopKey)) {
+            const intervalMinutes = {
+                seed: 5, gear: 5, event: 30, egg: 30, cosmetic: 240
+            }[shopKey] || 5;
+
+            return `${intervalMinutes}:00`;
+        }
+
+        return `${countdown.minutes}:${countdown.seconds.toString().padStart(2, '0')}`;
     };
 
-    const dailyDealsRestock = getDailyDealsRestock();
+    const fetchShopData = useCallback(async (
+        url: string,
+        setter: (items: StockItem[]) => void,
+        shopName: string,
+        shopKey: string
+    ) => {
+        try {
+            console.log(`🔄 Fetching ${shopName} on restock`);
 
-    // Use your refresh countdown hook
-    const seedCountdown = useRefreshCountdown("00:00", 5);
-    const gearCountdown = useRefreshCountdown("00:00", 5);
-    const eggCountdown = useRefreshCountdown("00:00", 30);
-    const cosmeticCountdown = useRefreshCountdown("00:00", 240);
-    const seasonCountdown = useRefreshCountdown("00:00", 5);
-    const dailyDealsCountdown = useRefreshCountdown("08:00", 1440);
+            setFetchingShops(prev => new Set(prev).add(shopKey));
 
-    useEffect(() => {
-        const fetchStock = async () => {
-            try {
-                const res = await fetch('/proxy/stock');
-                if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-                const data = await res.json();
-                setStockData(data);
-            } catch (error) {
-                console.error("Failed to fetch stock via proxy:", error);
+            // Fetch ALL data
+            const response = await fetch('/proxy/stock/grow-a-garden');
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+
+            // DEBUG: Log available keys
+            console.log(`🔑 Available keys for ${shopName}:`, Object.keys(data));
+
+            // SIMPLE EXTRACTION - no complex logic
+            let shopData = [];
+
+            if (shopKey === 'seed') {
+                shopData = data.seed_stock || data.raw_seeds || [];
+                console.log(`🌱 Seed shop items: ${shopData.length}`);
             }
-        };
+            else if (shopKey === 'gear') {
+                shopData = data.gear_stock || data.raw_gear || [];
+                console.log(`🛠️ Gear shop items: ${shopData.length}`);
+            }
+            else if (shopKey === 'egg') {
+                shopData = data.egg_stock || data.raw_eggs || [];
+                console.log(`🥚 Egg shop items: ${shopData.length}`);
+            }
+            else if (shopKey === 'cosmetic') {
+                shopData = data.cosmetic_stock || data.raw_cosmetics || [];
+                console.log(`💄 Cosmetic shop items: ${shopData.length}`);
+            }
+            // EVENT SHOP - SPECIAL HANDLING
+            else if (shopKey === 'event') {
+                console.log(`🎪 Looking for event shop data...`);
 
-        fetchStock();
-        const interval = setInterval(fetchStock, 60_000);
-        return () => clearInterval(interval);
+                // Try all possible event data sources
+                if (data.event_shop_stock && Array.isArray(data.event_shop_stock) && data.event_shop_stock.length > 0) {
+                    shopData = data.event_shop_stock;
+                    console.log(`✅ Using event_shop_stock: ${shopData.length} items`);
+                }
+                else if (data.raw_eventshop && Array.isArray(data.raw_eventshop) && data.raw_eventshop.length > 0) {
+                    shopData = data.raw_eventshop;
+                    console.log(`✅ Using raw_eventshop: ${shopData.length} items`);
+                }
+                else {
+                    // Check any key containing "event"
+                    const eventKeys = Object.keys(data).filter(k =>
+                        k.toLowerCase().includes('event') &&
+                        Array.isArray(data[k])
+                    );
+                    console.log(`🔍 Found event-related keys:`, eventKeys);
+
+                    if (eventKeys.length > 0) {
+                        shopData = data[eventKeys[0]];
+                        console.log(`✅ Using "${eventKeys[0]}": ${shopData.length} items`);
+                    }
+                }
+
+                if (shopData.length > 0 && shopData[0]) {
+                    console.log('📋 First event item structure:', shopData[0]);
+                }
+            }
+
+            // Transform data to consistent format
+            const transformedData = shopData.map((item: any) => {
+                // Use the same transformation logic as fetchAllData
+                const itemName = item.name || item.Name || item.title || 'Unknown Item';
+
+                const stockCount =
+                    item.Stock !== undefined ? item.Stock :
+                        item.stock !== undefined ? item.stock :
+                            item.quantity !== undefined ? item.quantity :
+                                item.Quantity !== undefined ? item.Quantity :
+                                    0;
+
+                const itemImage =
+                    item.image || item.Image || item.img || item.icon ||
+                    `https://cdn.3itx.tech/image/GrowAGarden/${
+                        itemName.toLowerCase()
+                            .replace(/\s+/g, '_')
+                            .replace(/[^a-z0-9_]/g, '')
+                    }`;
+
+                return {
+                    name: itemName,
+                    Stock: Number(stockCount),
+                    stock: Number(stockCount),
+                    quantity: Number(stockCount),
+                    image: itemImage
+                };
+            });
+
+            console.log(`✅ ${shopName} transformed items:`, transformedData.length);
+            setter(transformedData);
+            setLastUpdateTime(new Date());
+
+            // Reset countdown
+            setTimeout(() => {
+                const intervalMinutes = {
+                    seed: 5, gear: 5, event: 30, egg: 30, cosmetic: 240
+                }[shopKey] || 5;
+                startShopCountdown(shopKey, intervalMinutes);
+            }, 1000);
+
+            return true;
+        } catch (error) {
+            console.error(`❌ Failed to fetch ${shopName}:`, error);
+
+            setTimeout(() => {
+                const intervalMinutes = {
+                    seed: 5, gear: 5, event: 30, egg: 30, cosmetic: 240
+                }[shopKey] || 5;
+                startShopCountdown(shopKey, intervalMinutes);
+            }, 1000);
+
+            return false;
+        } finally {
+            setTimeout(() => {
+                setFetchingShops(prev => {
+                    const next = new Set(prev);
+                    next.delete(shopKey);
+                    return next;
+                });
+            }, 500);
+        }
+    }, [startShopCountdown]);
+
+    // Function to fetch weather data
+    const fetchWeatherData = useCallback(async () => {
+        try {
+            const response = await fetch('/proxy/events/grow-a-garden');
+            if (!response.ok) return false;
+
+            const data = await response.json();
+
+            if (data.lastSeenEvents && data.lastSeenEvents.length > 0) {
+                const weatherEvent = data.lastSeenEvents[0];
+                setWeatherData({
+                    type: weatherEvent.Name || 'unknown',
+                    active: weatherEvent.active || false,
+                    effects: [weatherEvent.Description || 'No description'],
+                    lastUpdated: new Date((weatherEvent.LastSeen || Date.now()/1000) * 1000).toISOString()
+                });
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('Failed to fetch weather:', error);
+            return false;
+        }
     }, []);
 
-    useEffect(() => {
-        const fetchWeatherEvents = async () => {
-            try {
-                setLoadingEvents(true);
-                const res = await fetch('/proxy/events');
-                if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-                const data = await res.json();
-                setWeatherEvents(data.lastSeenEvents || []);
-            } catch (error) {
-                console.error("Failed to fetch weather events:", error);
-                setWeatherEvents([]);
-            } finally {
-                setLoadingEvents(false);
-            }
-        };
+    const fetchAllData = useCallback(async () => {
+        try {
+            setIsLoading(true);
+            console.log('🚀 Starting to fetch all data...');
 
-        fetchWeatherEvents();
-        const interval = setInterval(fetchWeatherEvents, 60_000);
-        return () => clearInterval(interval);
+            // Fetch ALL data from your Laravel endpoint
+            const response = await fetch('/proxy/stock/grow-a-garden');
+            console.log('📡 Response status:', response.status);
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+            console.log('📦 Full stock data received');
+
+            // CRITICAL: Log EVERY key and its type/length
+            console.log('🔑 ALL KEYS in response:');
+            Object.keys(data).forEach(key => {
+                console.log(`  ${key}:`, Array.isArray(data[key]) ? `Array(${data[key].length})` : typeof data[key]);
+            });
+
+            console.log('🔍 DIRECT CHECK of event_shop_stock:');
+            console.log('Type:', typeof data.event_shop_stock);
+            console.log('Is array?', Array.isArray(data.event_shop_stock));
+            console.log('Length:', data.event_shop_stock ? data.event_shop_stock.length : 'undefined');
+            if (data.event_shop_stock && data.event_shop_stock.length > 0) {
+                console.log('First item structure:', data.event_shop_stock[0]);
+            }
+
+            console.log('🔍 Checking raw_eventshop:');
+            console.log('Length:', data.raw_eventshop ? data.raw_eventshop.length : 'undefined');
+            if (data.raw_eventshop && data.raw_eventshop.length > 0) {
+                console.log('First raw item:', data.raw_eventshop[0]);
+            }
+
+            // Set all shop data from the single response
+            setSeedStock(data.seed_stock || data.raw_seeds || []);
+            setGearStock(data.gear_stock || data.raw_gear || []);
+            setEggStock(data.egg_stock || data.raw_eggs || []);
+            setCosmeticStock(data.cosmetic_stock || data.raw_cosmetics || []);
+
+            console.log('🎯 Setting event shop data...');
+
+            let eventSource = null;
+            let eventItems = [];
+
+
+            if (data.event_shop_stock && Array.isArray(data.event_shop_stock) && data.event_shop_stock.length > 0) {
+                console.log('✅ Using transformed event_shop_stock data');
+                eventSource = 'event_shop_stock';
+                eventItems = data.event_shop_stock;
+            }
+            else if (data.raw_eventshop && Array.isArray(data.raw_eventshop) && data.raw_eventshop.length > 0) {
+                console.log('✅ Using raw_eventshop data');
+                eventSource = 'raw_eventshop';
+                eventItems = data.raw_eventshop;
+            }
+            else {
+                const eventKeys = Object.keys(data).filter(k =>
+                    k.toLowerCase().includes('event') &&
+                    Array.isArray(data[k]) &&
+                    data[k].length > 0
+                );
+                if (eventKeys.length > 0) {
+                    console.log(`✅ Using event data from: "${eventKeys[0]}"`);
+                    eventSource = eventKeys[0];
+                    eventItems = data[eventKeys[0]];
+                }
+            }
+
+            if (eventItems.length > 0) {
+                console.log(`📊 Found ${eventItems.length} event items from source: ${eventSource}`);
+
+
+                const transformedEventData = eventItems.map((item: any, index: number) => {
+                    // Debug first item
+                    if (index === 0) {
+                        console.log('🔍 First event item raw structure:', item);
+                    }
+
+                    // Extract name from various possible fields
+                    const itemName = item.name || item.Name || item.title || 'Unknown Item';
+
+                    // Extract stock count from various possible fields
+                    const stockCount =
+                        item.Stock !== undefined ? item.Stock :
+                            item.stock !== undefined ? item.stock :
+                                item.quantity !== undefined ? item.quantity :
+                                    item.Quantity !== undefined ? item.Quantity :
+                                        0;
+
+                    // Extract image from various possible fields
+                    const itemImage =
+                        item.image || item.Image || item.img || item.icon ||
+                        `https://cdn.3itx.tech/image/GrowAGarden/${
+                            itemName.toLowerCase()
+                                .replace(/\s+/g, '_')
+                                .replace(/[^a-z0-9_]/g, '')
+                        }`;
+
+                    return {
+                        name: itemName,
+                        Stock: Number(stockCount),
+                        stock: Number(stockCount),
+                        quantity: Number(stockCount),
+                        image: itemImage,
+
+                    };
+                });
+
+                console.log('✅ Transformed event data sample:', transformedEventData[0]);
+                console.log(`✅ Total event items: ${transformedEventData.length}`);
+                setEventShopStock(transformedEventData);
+            } else {
+                console.log('⚠️ No event shop data found in any source');
+                setEventShopStock([]);
+            }
+
+            try {
+                const weatherResponse = await fetch('/proxy/events/grow-a-garden');
+                if (weatherResponse.ok) {
+                    const weatherData = await weatherResponse.json();
+
+                    if (weatherData.lastSeenEvents && weatherData.lastSeenEvents.length > 0) {
+                        const weatherEvent = weatherData.lastSeenEvents[0];
+                        setWeatherData({
+                            type: weatherEvent.Name,
+                            active: weatherEvent.active || false,
+                            effects: [weatherEvent.Description],
+                            lastUpdated: new Date(weatherEvent.LastSeen * 1000).toISOString()
+                        });
+                    }
+                }
+            } catch (weatherError) {
+                console.error('Failed to fetch weather:', weatherError);
+            }
+
+            setLastUpdateTime(new Date());
+
+        } catch (error) {
+            console.error('Failed to fetch data:', error);
+
+            // Set empty arrays to prevent UI errors
+            setSeedStock([]);
+            setGearStock([]);
+            setEggStock([]);
+            setCosmeticStock([]);
+            setEventShopStock([]);
+        } finally {
+            setIsLoading(false);
+        }
     }, []);
+
+    // Initial setup
+    useEffect(() => {
+        fetchAllData();
+
+        const shopConfigs = [
+            { key: 'seed', interval: 5 },
+            { key: 'gear', interval: 5 },
+            { key: 'event', interval: 30 },
+            { key: 'egg', interval: 30 },
+            { key: 'cosmetic', interval: 240 },
+        ];
+
+        const timer = setTimeout(() => {
+            shopConfigs.forEach(config => {
+                startShopCountdown(config.key, config.interval);
+            });
+        }, 1000);
+
+        const weatherInterval = setInterval(fetchWeatherData, 5 * 60 * 1000);
+
+        return () => {
+            clearTimeout(timer);
+            clearInterval(weatherInterval);
+            Object.values(countdownIntervalsRef.current).forEach(clearInterval);
+            Object.values(fetchTimeoutsRef.current).forEach(clearTimeout);
+        };
+    }, [fetchAllData, fetchWeatherData, startShopCountdown]);
+
+    const formatLastUpdate = () => {
+        const now = new Date();
+        const diffMs = now.getTime() - lastUpdateTime.getTime();
+        const diffMins = Math.floor(diffMs / 60000);
+        if (diffMins < 1) return 'Just now';
+        if (diffMins === 1) return '1 minute ago';
+        return `${diffMins} minutes ago`;
+    };
+
+    // Transform weather data
+    const weatherEvents = weatherData ? [{
+        Name: weatherData.type,
+        DisplayName: weatherData.type.charAt(0).toUpperCase() + weatherData.type.slice(1),
+        Image: `https://cdn.3itx.tech/image/GrowAGarden/${weatherData.type.toLowerCase()}`,
+        Description: weatherData.effects.join(', '),
+        LastSeen: new Date(weatherData.lastUpdated).getTime() / 1000,
+        start_timestamp_unix: new Date(weatherData.lastUpdated).getTime() / 1000,
+        end_timestamp_unix: new Date().getTime() / 1000 + 3600,
+        active: weatherData.active,
+        duration: 3600
+    }] : [];
+
+    // Manual refresh
+    const handleManualRefresh = useCallback(async () => {
+        setIsLoading(true);
+        await fetchAllData();
+
+        const shopConfigs = [
+            { key: 'seed', interval: 5 },
+            { key: 'gear', interval: 5 },
+            { key: 'event', interval: 30 },
+            { key: 'egg', interval: 30 },
+            { key: 'cosmetic', interval: 240 },
+        ];
+
+        shopConfigs.forEach(config => {
+            startShopCountdown(config.key, config.interval);
+        });
+    }, [fetchAllData, startShopCountdown]);
 
     return (
         <AppLayout breadcrumbs={breadcrumbs} data-theme="red">
@@ -165,6 +582,27 @@ export default function GrowAGarden() {
                     <H2 className="text-sidebar-primary">
                         Grow a Garden
                     </H2>
+
+                    {/* Last Update Indicator */}
+                    <div className="mt-4 text-sm text-gray-500">
+                        {isLoading ? (
+                            <div className="flex items-center gap-2">
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                                <span>Updating data...</span>
+                            </div>
+                        ) : (
+                            <div className="flex items-center gap-2">
+                                <span className="h-2 w-2 rounded-full bg-green-500"></span>
+                                <span>Last updated: {formatLastUpdate()}</span>
+                                <button
+                                    onClick={handleManualRefresh}
+                                    className="ml-2 px-2 py-1 text-xs bg-primary text-white rounded hover:bg-primary/80"
+                                >
+                                    Refresh Now
+                                </button>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 <H4>
@@ -174,59 +612,59 @@ export default function GrowAGarden() {
                 <div className="grid auto-rows-min gap-4 md:grid-cols-3 bg-transparent">
                     <StockCard
                         title="Seed Shop"
-                        items={stockData?.seed_stock ?? []}
+                        items={seedStock}
                         lastRestock={seedRestock.lastRestock}
                         nextRestock={seedRestock.nextRestock}
-                        countdown={seedCountdown}
+                        countdown={formatCountdown('seed')}
                         intervalMinutes={5}
+                        isLoading={isLoading || fetchingShops.has('seed')}
                     />
                     <StockCard
-                        title="Daily Deals"
-                        items={stockData?.seed_stock ?? []}
-                        lastRestock={dailyDealsRestock.lastRestock}
-                        nextRestock={dailyDealsRestock.nextRestock}
-                        countdown={dailyDealsCountdown}
-                        intervalMinutes={1440}
+                        title="Event Shop"
+                        items={eventShopStock}
+                        lastRestock={eventShopRestock.lastRestock}
+                        nextRestock={eventShopRestock.nextRestock}
+                        countdown={formatCountdown('event')}
+                        intervalMinutes={30}
+                        isLoading={isLoading || fetchingShops.has('event')}
                     />
                     <StockCard
                         title="Gear Shop"
-                        items={stockData?.gear_stock ?? []}
+                        items={gearStock}
                         lastRestock={gearRestock.lastRestock}
                         nextRestock={gearRestock.nextRestock}
-                        countdown={gearCountdown}
+                        countdown={formatCountdown('gear')}
                         intervalMinutes={5}
+                        isLoading={isLoading || fetchingShops.has('gear')}
                     />
                     <StockCard
                         title="Egg Shop"
-                        items={stockData?.egg_stock ?? []}
+                        items={eggStock}
                         lastRestock={eggRestock.lastRestock}
                         nextRestock={eggRestock.nextRestock}
-                        countdown={eggCountdown}
+                        countdown={formatCountdown('egg')}
                         intervalMinutes={30}
+                        isLoading={isLoading || fetchingShops.has('egg')}
                     />
                     <StockCard
                         title="Cosmetic Shop"
-                        items={stockData?.cosmetic_stock ?? []}
+                        items={cosmeticStock}
                         lastRestock={cosmeticRestock.lastRestock}
                         nextRestock={cosmeticRestock.nextRestock}
-                        countdown={cosmeticCountdown}
+                        countdown={formatCountdown('cosmetic')}
                         intervalMinutes={240}
-                    />
-                    <StockCard
-                        title="Season Pass Shop"
-                        items={stockData?.Season_Stock ?? []}
-                        lastRestock={seasonRestock.lastRestock}
-                        nextRestock={seasonRestock.nextRestock}
-                        countdown={seasonCountdown}
-                        intervalMinutes={5}
+                        isLoading={isLoading || fetchingShops.has('cosmetic')}
                     />
 
+                    {/* Weather Card */}
                     <WeatherCard
                         className="col-span-3"
-                        title="Weather Events"
+                        title="Current Weather"
                         items={weatherEvents}
+                        isLoading={isLoading}
                     />
                 </div>
+
                 <H4 className="mt-20">
                     Stocks and Weather Events Forecast
                 </H4>

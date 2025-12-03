@@ -6,9 +6,11 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class SnapshotModel extends Model
+class ItemSnapshotModel extends Model
 {
     use HasFactory;
+
+    protected $table = 'item_snapshot';
 
     protected $fillable = [
         'item_id',
@@ -24,16 +26,16 @@ class SnapshotModel extends Model
     /**
      * Get the item for the snapshot.
      */
-    public function item(): BelongsTo
+    public function item()
     {
-        return $this->belongsTo(ItemModel::class);
+        return $this->belongsTo(ItemModel::class, 'item_id');
     }
 
     /**
      * Get the shop for the snapshot.
      */
-    public function shop(): BelongsTo
+    public function shop()
     {
-        return $this->belongsTo(ShopModel::class);
+        return $this->belongsTo(ShopModel::class, 'shop_id');
     }
 }

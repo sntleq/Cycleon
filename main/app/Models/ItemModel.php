@@ -12,6 +12,8 @@ class ItemModel extends Model
 {
     use HasFactory;
 
+    protected $table = 'item';
+
     protected $fillable = [
         'name',
         'type',
@@ -31,17 +33,17 @@ class ItemModel extends Model
     /**
      * Get the game that owns the item.
      */
-    public function game(): BelongsTo
+    public function game()
     {
-        return $this->belongsTo(GameModel::class);
+        return $this->belongsTo(GameModel::class, 'game_id');
     }
 
     /**
      * Get all snapshots for the item.
      */
-    public function snapshot(): HasMany
+    public function itemSnapshots()
     {
-        return $this->hasMany(SnapshotModel::class);
+        return $this->hasMany(ItemSnapshotModel::class, 'item_id');
     }
 
     /**
@@ -57,6 +59,8 @@ class ItemModel extends Model
      */
     public function shop()
     {
-        return $this->hasManyThrough(ShopModel::class, SnapshotModel::class);
+        return $this->hasManyThrough(ShopModel::class, ItemSnapshotModel::class);
     }
+
+
 }
