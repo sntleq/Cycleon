@@ -79,7 +79,7 @@ export default function WeatherCard({
     }
 
     return (
-        <Card className={className}>
+        <Card className="bg-background/20 hover:bg-primary/20 max-w-md">
             <CardHeader>
                 <CardTitle>{title}</CardTitle>
                 <CardDescription>

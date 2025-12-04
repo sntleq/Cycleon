@@ -9,6 +9,8 @@ import { type BreadcrumbItem } from '@/types';
 import { Head } from '@inertiajs/react';
 import StockCard from "@/components/stock-card";
 import WeatherCard from "@/components/weather-card";
+import {RotateCcw} from "lucide-react";
+import {Button} from "@/components/ui/button";
 
 const breadcrumbs: BreadcrumbItem[] = [
     {
@@ -585,29 +587,26 @@ export default function GrowAGarden() {
 
                     {/* Last Update Indicator */}
                     <div className="mt-4 text-sm text-gray-500">
-                        {isLoading ? (
-                            <div className="flex items-center gap-2">
-                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-                                <span>Updating data...</span>
-                            </div>
-                        ) : (
-                            <div className="flex items-center gap-2">
-                                <span className="h-2 w-2 rounded-full bg-green-500"></span>
-                                <span>Last updated: {formatLastUpdate()}</span>
-                                <button
-                                    onClick={handleManualRefresh}
-                                    className="ml-2 px-2 py-1 text-xs bg-primary text-white rounded hover:bg-primary/80"
-                                >
-                                    Refresh Now
-                                </button>
-                            </div>
-                        )}
+
                     </div>
                 </div>
 
-                <H4>
-                    Live Stocks and Weather Events
-                </H4>
+                <div className="flex justify-between items-center w-full">
+                    <H4>
+                        Live Stocks and Weather Events
+                    </H4>
+                    {isLoading ? (
+                        <div className="flex items-center gap-2">
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                            <span>Updating data...</span>
+                        </div>
+                    ) : (
+                        <Button onClick={handleManualRefresh}>
+                            <RotateCcw/> Refresh
+                        </Button>
+                    )}
+
+                </div>
 
                 <div className="grid auto-rows-min gap-4 md:grid-cols-3 bg-transparent">
                     <StockCard
@@ -658,7 +657,6 @@ export default function GrowAGarden() {
 
                     {/* Weather Card */}
                     <WeatherCard
-                        className="col-span-3"
                         title="Current Weather"
                         items={weatherEvents}
                         isLoading={isLoading}
