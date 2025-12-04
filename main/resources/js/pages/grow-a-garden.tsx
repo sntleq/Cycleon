@@ -173,7 +173,7 @@ export default function GrowAGarden() {
     // Function to format countdown for display
     const formatCountdown = (shopKey: string): string => {
         const countdown = countdowns[shopKey];
-        if (!countdown) return "0:00";
+        if (!countdown) return "0:00:00";
 
         // When countdown reaches 0, show "Restocking..." while fetching
         if (countdown.totalSeconds === 0 && fetchingShops.has(shopKey)) {
@@ -186,10 +186,24 @@ export default function GrowAGarden() {
                 seed: 5, gear: 5, event: 30, egg: 30, cosmetic: 240
             }[shopKey] || 5;
 
-            return `${intervalMinutes}:00`;
+            // For cosmetic shop, format as HH:MM:SS
+            if (shopKey === 'cosmetic') {
+                const hours = Math.floor(intervalMinutes / 60);
+                const minutes = intervalMinutes % 60;
+                return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:00`;
+            } else {
+                return `${intervalMinutes}:00`;
+            }
         }
 
-        return `${countdown.minutes}:${countdown.seconds.toString().padStart(2, '0')}`;
+        if (shopKey === 'cosmetic') {
+            const hours = Math.floor(countdown.totalSeconds / 3600);
+            const minutes = Math.floor((countdown.totalSeconds % 3600) / 60);
+            const seconds = countdown.totalSeconds % 60;
+            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        } else {
+            return `${countdown.minutes}:${countdown.seconds.toString().padStart(2, '0')}`;
+        }
     };
 
     const fetchShopData = useCallback(async (
@@ -533,14 +547,6 @@ export default function GrowAGarden() {
         };
     }, [fetchAllData, fetchWeatherData, startShopCountdown]);
 
-    const formatLastUpdate = () => {
-        const now = new Date();
-        const diffMs = now.getTime() - lastUpdateTime.getTime();
-        const diffMins = Math.floor(diffMs / 60000);
-        if (diffMins < 1) return 'Just now';
-        if (diffMins === 1) return '1 minute ago';
-        return `${diffMins} minutes ago`;
-    };
 
     // Transform weather data
     const weatherEvents = weatherData ? [{
@@ -550,7 +556,7 @@ export default function GrowAGarden() {
         Description: weatherData.effects.join(', '),
         LastSeen: new Date(weatherData.lastUpdated).getTime() / 1000,
         start_timestamp_unix: new Date(weatherData.lastUpdated).getTime() / 1000,
-        end_timestamp_unix: new Date().getTime() / 1000 + 3600,
+        end_timestamp_unix: new Date(weatherData.lastUpdated).getTime() / 1000 + 3600,
         active: weatherData.active,
         duration: 3600
     }] : [];
